@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kira-mcp"
+version = "0.3.0"
+description = "Local MCP server for AI agents: OpenCV UI-element detection plus full keyboard / mouse / screen / clipboard control via pyautogui + mss."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = [
+  "mcp",
+  "model-context-protocol",
+  "agent",
+  "computer-use",
+  "opencv",
+  "pyautogui",
+  "automation",
+]
+dependencies = [
+  "mcp>=1.2.0",
+  "pyautogui>=0.9.54",
+  "mss>=9.0.1",
+  "opencv-python>=4.8.0",
+  "numpy>=1.24",
+  "pyperclip>=1.8.2",
+  "pillow>=10.0",
+  "pydantic>=2.0",
+  # parked: only imported when run_omniparser is enabled
+  "replicate>=0.30.0",
+]
+
+[project.scripts]
+kira-mcp = "kira_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kira_mcp"]

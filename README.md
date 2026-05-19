@@ -1,36 +1,145 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# kira-mcp
 
-## Getting Started
+A local [Model Context Protocol](https://modelcontextprotocol.io) server that gives AI agents:
 
-First, run the development server:
+- **Vision** — `detect_ui_contours` runs an OpenCV contour-detection + geometric classifier pipeline locally to find candidate UI element bounding boxes in a screenshot. No API key needed. (`run_omniparser` against [microsoft/omniparser-v2](https://replicate.com/microsoft/omniparser-v2) on Replicate is also implemented but parked — enable it in `src/kira_mcp/tools/__init__.py` once you have `REPLICATE_API_TOKEN`.)
+- **Desktop automation** — full mouse, keyboard, screen, and clipboard control via [pyautogui](https://pyautogui.readthedocs.io/), [mss](https://github.com/BoboTiG/python-mss), and [pyperclip](https://github.com/asweigart/pyperclip).
+
+Runs as a stdio MCP server — your agent host (Claude Desktop, Cursor, Windsurf, Continue, …) launches it as a child process.
+
+## Requirements
+
+- Python 3.10+
+- System packages for `pyautogui` to actually move the mouse / press keys:
+  - **Linux:** `python3-tk python3-dev scrot xdotool`
+  - **macOS:** grant Accessibility permission to whichever terminal is running the server
+  - **Windows:** nothing extra
+
+## Install
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <this repo>
+cd kira-mcp
+pip install -e .
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This installs the `kira-mcp` console script.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configure your agent host
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Claude Desktop
 
-## Learn More
+Edit `claude_desktop_config.json`:
 
-To learn more about Next.js, take a look at the following resources:
+```json
+{
+  "mcpServers": {
+    "kira-mcp": {
+      "command": "kira-mcp"
+    }
+  }
+}
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Or, if you'd rather not rely on the installed script:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```json
+{
+  "mcpServers": {
+    "kira-mcp": {
+      "command": "python",
+      "args": ["-m", "kira_mcp"]
+    }
+  }
+}
+```
 
-## Deploy on Vercel
+Restart Claude Desktop. All `kira-mcp` tools should now appear.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Cursor / Windsurf / Continue
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Same shape — point the MCP server config at `kira-mcp` (or `python -m kira_mcp`).
+
+## Tools
+
+### Vision
+
+| Tool | Purpose |
+|---|---|
+| `detect_ui_contours` | Local OpenCV pipeline: grayscale → Canny → dilate → findContours → geometric classifier. Returns JSON with bounding boxes + types (`button`, `input`, `image/card`, `text line`, `divider`, `panel`, `unknown`). Optionally writes an annotated PNG. |
+| `run_omniparser` | *Parked.* Calls `microsoft/omniparser-v2` on Replicate. Enable by uncommenting in `tools/__init__.py`. |
+
+### Mouse
+
+| Tool | Purpose |
+|---|---|
+| `mouse_move` | Move to absolute `(x, y)`. `duration=0` for an instant jump. |
+| `mouse_position` | Get the cursor's current `(x, y)`. |
+| `mouse_click` | Click `left`/`middle`/`right`. Optional `(x, y)` moves first; `clicks` for multi-click. |
+| `mouse_double_click` | Double-click a button. Optional `(x, y)`. |
+| `mouse_press` | Press and hold a button. |
+| `mouse_release` | Release a previously held button. |
+| `mouse_drag` | Move to `(from_x, from_y)`, drag to `(to_x, to_y)`, release. |
+| `mouse_scroll` | Scroll `up`/`down`/`left`/`right` by N clicks. |
+
+### Keyboard
+
+| Tool | Purpose |
+|---|---|
+| `keyboard_type` | Type literal text via the system keyboard. |
+| `keyboard_tap` | Press + release a key chord, e.g. `["ctrl", "c"]`, `["cmd", "shift", "t"]`. |
+| `keyboard_press` | Press and hold one or more keys. |
+| `keyboard_release` | Release one or more held keys (reverse order). |
+| `keyboard_key_check` | Resolve a key name to its pyautogui-canonical form (debugging helper). |
+
+Key names accept any value from `pyautogui.KEYBOARD_KEYS` plus common aliases (`ctrl`, `alt`, `shift`, `cmd`/`command`, `win`/`windows`/`super`, `meta`, `esc`/`escape`, `enter`/`return`, `space`/`spacebar`, `pgup`/`pageup`, `pgdn`/`pagedown`, `del`, `ins`).
+
+### Screen
+
+| Tool | Purpose |
+|---|---|
+| `screen_size` | Return `{ width, height }` of the main display. |
+| `screen_capture` | Take a screenshot (full screen or `{ x, y, width, height }` region); save as `png` (default) or `jpg`. Returns the absolute file path. Defaults to a unique tempfile under the OS tmpdir. |
+
+### Clipboard
+
+| Tool | Purpose |
+|---|---|
+| `clipboard_get` | Read the system clipboard's text. |
+| `clipboard_set` | Write text to the system clipboard. |
+
+## Layout
+
+```
+src/kira_mcp/
+├── __init__.py
+├── __main__.py        # entry — `python -m kira_mcp`
+├── _mcp.py            # shared FastMCP instance
+├── lib/
+│   └── keys.py        # key-name normalization for pyautogui
+└── tools/
+    ├── __init__.py    # side-effect imports → registers tools
+    ├── contour.py
+    ├── mouse.py
+    ├── keyboard.py
+    ├── screen.py
+    ├── clipboard.py
+    └── omniparser.py  # parked
+```
+
+Add a new tool by writing a function decorated with `@mcp.tool()` (imported from `kira_mcp._mcp`) and importing the module from `tools/__init__.py`.
+
+## Local development
+
+```bash
+pip install -e .
+python -m kira_mcp   # runs the stdio server; talk to it via your MCP host
+```
+
+## Safety
+
+`pyautogui.FAILSAFE` is left enabled — slamming the mouse into the top-left corner of the screen raises `FailSafeException` and aborts whatever the agent was doing. Keep it on.
+
+## License
+
+MIT
