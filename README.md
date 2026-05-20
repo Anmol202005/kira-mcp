@@ -9,6 +9,7 @@
 ```
 
 <p align="center">
+  <a href="https://pypi.org/project/kira-mcp/"><img alt="PyPI" src="https://img.shields.io/pypi/v/kira-mcp?color=3775A9&label=pypi"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white"></a>
   <a href="https://modelcontextprotocol.io"><img alt="MCP 1.2+" src="https://img.shields.io/badge/MCP-1.2+-7C3AED"></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
@@ -38,13 +39,21 @@ The server speaks stdio JSON-RPC and is launched as a child process by your agen
 
 ## Install
 
+From PyPI (recommended):
+
 ```bash
-git clone https://github.com/<you>/kira-mcp.git
-cd kira-mcp
-pip install -e .
+pip install kira-mcp
 ```
 
-This installs the `kira-mcp` console script and registers all tool modules.
+…or, for an isolated global install that won't pollute any project's `site-packages`:
+
+```bash
+pipx install kira-mcp
+```
+
+Either form installs the `kira-mcp` console script and registers every tool module.
+
+> Working on kira-mcp itself? Clone and install editable: `git clone https://github.com/Anmol202005/kira-mcp.git && cd kira-mcp && pip install -e .`
 
 ## Configure your agent host
 

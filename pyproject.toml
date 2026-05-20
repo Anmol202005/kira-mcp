@@ -9,6 +9,7 @@ description = "Local MCP server for AI agents: OpenCV UI-element detection plus 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [{ name = "Anmol Sharma", email = "anmol20102005@gmail.com" }]
 keywords = [
   "mcp",
   "model-context-protocol",
@@ -18,6 +19,21 @@ keywords = [
   "pyautogui",
   "automation",
 ]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+  "Topic :: Utilities",
+]
+
 dependencies = [
   "mcp>=1.2.0",
   "pyautogui>=0.9.54",
@@ -30,6 +46,11 @@ dependencies = [
   # parked: only imported when run_omniparser is enabled
   "replicate>=0.30.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Anmol202005/kira-mcp"
+Repository = "https://github.com/Anmol202005/kira-mcp"
+Issues = "https://github.com/Anmol202005/kira-mcp/issues"
 
 [project.scripts]
 kira-mcp = "kira_mcp.__main__:main"
