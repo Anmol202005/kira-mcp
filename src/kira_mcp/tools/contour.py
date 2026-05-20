@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from typing import Annotated, Any
 
 import cv2
@@ -61,8 +60,8 @@ def detect_ui_contours(
         str | None,
         Field(
             description=(
-                "Where to write the annotated image. Defaults to "
-                "<image>_detected.<ext> next to the input."
+                "Where to write the annotated image. If omitted, the annotated "
+                "image is only returned inline (no disk write) — faster."
             )
         ),
     ] = None,
@@ -142,7 +141,7 @@ def detect_ui_contours(
         el["id"] = i
 
     annotated_path: str | None = None
-    annotated_png: bytes | None = None
+    annotated_bytes: bytes | None = None
     if annotate:
         annotated = img.copy()
         for el in elements:
@@ -167,16 +166,14 @@ def detect_ui_contours(
             )
             legend_y += 18
 
-        if output_path is None:
-            base, ext = os.path.splitext(image)
-            output_path = base + "_detected" + (ext or ".png")
-        cv2.imwrite(output_path, annotated)
-        annotated_path = output_path
+        if output_path is not None:
+            cv2.imwrite(output_path, annotated)
+            annotated_path = output_path
 
         if return_image:
-            ok, buf = cv2.imencode(".png", annotated)
+            ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
-                annotated_png = buf.tobytes()
+                annotated_bytes = buf.tobytes()
 
     payload = json.dumps({
         "image": image,
@@ -188,12 +185,12 @@ def detect_ui_contours(
     })
 
     content: list = []
-    if annotated_png is not None:
+    if annotated_bytes is not None:
         content.append(
             ImageContent(
                 type="image",
-                data=base64.b64encode(annotated_png).decode("ascii"),
-                mimeType="image/png",
+                data=base64.b64encode(annotated_bytes).decode("ascii"),
+                mimeType="image/jpeg",
             )
         )
     content.append(TextContent(type="text", text=payload))

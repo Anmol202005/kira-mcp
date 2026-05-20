@@ -45,8 +45,8 @@ def screen_capture(
     ] = None,
     format: Annotated[
         Literal["png", "jpg"],
-        Field(description="Image format."),
-    ] = "png",
+        Field(description="Image format. JPG (default) is ~3× faster to encode and ~5–10× smaller; PNG is lossless."),
+    ] = "jpg",
     region: Annotated[
         Region | None,
         Field(description="Optional region to capture instead of the full screen."),
