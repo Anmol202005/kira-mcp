@@ -1,10 +1,14 @@
-"""Keyboard control via pyautogui."""
+"""Keyboard control via pyautogui.
+
+pyautogui is imported lazily inside each handler — touching it at import time
+triggers an X display probe, which would crash the whole server on headless or
+unauthorized sessions before any tool gets a chance to register.
+"""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-import pyautogui
 from pydantic import Field
 
 from .._mcp import mcp
@@ -21,6 +25,8 @@ def keyboard_type(
 ) -> str:
     """Type a literal string via the system keyboard. Mirrors a real user typing —
     works in any focused text field."""
+    import pyautogui
+
     pyautogui.typewrite(text, interval=interval)
     return f"Typed {len(text)} character(s)."
 
@@ -41,6 +47,8 @@ def keyboard_tap(
     """Press and release a key chord (single key or modifier combination). Accepts
     pyautogui key names (a, enter, f5, pageup, ...) plus aliases (ctrl, alt,
     shift, cmd, win, esc, pgup, ...)."""
+    import pyautogui
+
     resolved = normalize_keys(keys)
     if len(resolved) == 1:
         pyautogui.press(resolved[0])
@@ -58,6 +66,8 @@ def keyboard_press(
 ) -> str:
     """Press and hold one or more keys without releasing them. Pair with
     `keyboard_release`."""
+    import pyautogui
+
     for k in normalize_keys(keys):
         pyautogui.keyDown(k)
     return f"Holding {' + '.join(keys)}."
@@ -71,6 +81,8 @@ def keyboard_release(
     ],
 ) -> str:
     """Release one or more previously held keys (in reverse order, modifiers last)."""
+    import pyautogui
+
     for k in reversed(normalize_keys(keys)):
         pyautogui.keyUp(k)
     return f"Released {' + '.join(keys)}."

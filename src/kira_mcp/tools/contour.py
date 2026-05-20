@@ -3,12 +3,14 @@ Replicate token is available, or for offline runs."""
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from typing import Annotated, Any
 
 import cv2
 import numpy as np
+from mcp.types import CallToolResult, ImageContent, TextContent
 from pydantic import Field
 
 from .._mcp import mcp
@@ -72,16 +74,24 @@ def detect_ui_contours(
     canny_high: Annotated[int, Field(ge=0, description="Upper Canny threshold.")] = 100,
     annotate: Annotated[
         bool,
-        Field(description="If true, write an annotated PNG with bounding boxes + labels + legend."),
+        Field(description="If true, write an annotated PNG with bounding boxes + labels + legend AND return it inline so the agent can see the labeled screen."),
     ] = True,
-) -> str:
+    return_image: Annotated[
+        bool,
+        Field(description="If true (default) AND annotate is true, embed the annotated PNG as image content in the response. Set false to save bandwidth when the agent only needs the JSON."),
+    ] = True,
+) -> CallToolResult:
     """Detect candidate UI element bounding boxes in a screenshot using OpenCV
     (grayscale → blur → Canny → dilate → findContours). Classifies each via
     geometric heuristics (button / input / image-card / text line / divider /
-    panel / unknown) and optionally writes an annotated PNG alongside.
+    panel / unknown) and writes an annotated PNG alongside.
 
-    Output is coarser than omniparser — no semantic labels for text content —
-    but it's free, fast, and runs entirely on this machine."""
+    Returns BOTH a labeled image (so you can visually correlate `id` numbers
+    with on-screen elements) AND the JSON describing every detected box. Use
+    `(cx, cy)` of any element as the click target for mouse tools.
+
+    Output is coarser than omniparser — no semantic text labels — but it's
+    free, fast, and runs entirely on this machine."""
 
     img = cv2.imread(image)
     if img is None:
@@ -132,6 +142,7 @@ def detect_ui_contours(
         el["id"] = i
 
     annotated_path: str | None = None
+    annotated_png: bytes | None = None
     if annotate:
         annotated = img.copy()
         for el in elements:
@@ -162,7 +173,12 @@ def detect_ui_contours(
         cv2.imwrite(output_path, annotated)
         annotated_path = output_path
 
-    return json.dumps({
+        if return_image:
+            ok, buf = cv2.imencode(".png", annotated)
+            if ok:
+                annotated_png = buf.tobytes()
+
+    payload = json.dumps({
         "image": image,
         "width": int(w),
         "height": int(h),
@@ -170,3 +186,15 @@ def detect_ui_contours(
         "annotated": annotated_path,
         "elements": elements,
     })
+
+    content: list = []
+    if annotated_png is not None:
+        content.append(
+            ImageContent(
+                type="image",
+                data=base64.b64encode(annotated_png).decode("ascii"),
+                mimeType="image/png",
+            )
+        )
+    content.append(TextContent(type="text", text=payload))
+    return CallToolResult(content=content)

@@ -1,11 +1,15 @@
-"""Mouse control via pyautogui."""
+"""Mouse control via pyautogui.
+
+pyautogui is imported lazily inside each handler — touching it at import time
+triggers an X display probe, which would crash the whole server on headless or
+unauthorized sessions before any tool gets a chance to register.
+"""
 
 from __future__ import annotations
 
 import json
 from typing import Annotated, Literal
 
-import pyautogui
 from pydantic import Field
 
 from .._mcp import mcp
@@ -23,6 +27,8 @@ def mouse_move(
     ] = 0.2,
 ) -> str:
     """Move the mouse cursor to an absolute (x, y) on the main display."""
+    import pyautogui
+
     pyautogui.moveTo(x, y, duration=duration)
     return f"Moved mouse to ({x}, {y})."
 
@@ -30,6 +36,8 @@ def mouse_move(
 @mcp.tool()
 def mouse_position() -> str:
     """Get the current absolute (x, y) of the mouse cursor."""
+    import pyautogui
+
     pos = pyautogui.position()
     return json.dumps({"x": pos.x, "y": pos.y})
 
@@ -43,6 +51,8 @@ def mouse_click(
     interval: Annotated[float, Field(ge=0, description="Seconds between clicks when clicks > 1.")] = 0.0,
 ) -> str:
     """Click a mouse button at the current cursor position (or at (x, y) if both given)."""
+    import pyautogui
+
     if x is not None and y is not None:
         pyautogui.click(x=x, y=y, clicks=clicks, interval=interval, button=button)
     else:
@@ -58,6 +68,8 @@ def mouse_double_click(
     y: Annotated[int | None, Field(description="Optional Y to move to before clicking.")] = None,
 ) -> str:
     """Double-click a mouse button at the current cursor position (or at (x, y) if both given)."""
+    import pyautogui
+
     if x is not None and y is not None:
         pyautogui.doubleClick(x=x, y=y, button=button)
     else:
@@ -71,6 +83,8 @@ def mouse_press(
     button: Annotated[Button, Field(description="Mouse button.")] = "left",
 ) -> str:
     """Press and hold a mouse button. Pair with `mouse_release` for custom drags."""
+    import pyautogui
+
     pyautogui.mouseDown(button=button)
     return f"Holding {button} button."
 
@@ -80,6 +94,8 @@ def mouse_release(
     button: Annotated[Button, Field(description="Mouse button.")] = "left",
 ) -> str:
     """Release a previously held mouse button."""
+    import pyautogui
+
     pyautogui.mouseUp(button=button)
     return f"Released {button} button."
 
@@ -94,6 +110,8 @@ def mouse_drag(
     duration: Annotated[float, Field(ge=0, description="Drag duration in seconds.")] = 0.3,
 ) -> str:
     """Press at (from_x, from_y), drag to (to_x, to_y), release."""
+    import pyautogui
+
     pyautogui.moveTo(from_x, from_y)
     pyautogui.dragTo(to_x, to_y, duration=duration, button=button)
     return f"Dragged {button} from ({from_x}, {from_y}) to ({to_x}, {to_y})."
@@ -108,6 +126,8 @@ def mouse_scroll(
     amount: Annotated[int, Field(gt=0, description="Number of scroll clicks.")] = 3,
 ) -> str:
     """Scroll the mouse wheel. Horizontal scrolling requires OS support (hscroll)."""
+    import pyautogui
+
     if direction == "up":
         pyautogui.scroll(amount)
     elif direction == "down":
