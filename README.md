@@ -20,9 +20,8 @@
 
 **kira-mcp** is a local [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible agent host (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) full **computer-use** capabilities on the host machine:
 
-- **Vision** — `detect_ui_contours` runs an OpenCV contour pipeline + geometric classifier to locate candidate UI elements in a screenshot, returning bounding boxes with `(cx, cy)` click targets and an annotated overlay image. Fully local, no API key required.
+- **Vision** — `detect_ui_contours` runs [microsoft/OmniParser-v2](https://huggingface.co/microsoft/OmniParser-v2.0) on a public [Hugging Face Space](https://huggingface.co/spaces/AI-DrivenTesting/OmniParser-v2) to identify on-screen elements, returning semantic labels (button / text / icon, recognised text content, interactivity) with bounding boxes, `(cx, cy)` click targets, and an annotated overlay image. No API key required — the Space is free to call.
 - **Desktop automation** — pixel-accurate mouse control, keyboard input (incl. chords and key holds), screen capture, and clipboard read/write via [pyautogui](https://pyautogui.readthedocs.io/), [mss](https://github.com/BoboTiG/python-mss), and [pyperclip](https://github.com/asweigart/pyperclip).
-- **Optional ML upgrade** — `run_omniparser` against [microsoft/omniparser-v2](https://replicate.com/microsoft/omniparser-v2) on Replicate is wired up but parked. Enable in `src/kira_mcp/tools/__init__.py` once you have a `REPLICATE_API_TOKEN`.
 
 The server speaks stdio JSON-RPC and is launched as a child process by your agent host.
 
@@ -33,7 +32,7 @@ The server speaks stdio JSON-RPC and is launched as a child process by your agen
 
   | OS | Setup |
   |---|---|
-  | **Linux** | `sudo apt install python3-tk python3-dev scrot xdotool` (or the equivalent on your distro). X11 sessions only — Wayland blocks raw screen grabs (see [Wayland notes](#wayland-note)). |
+  | **Linux** | `sudo apt install python3-tk python3-dev scrot xdotool` (or the equivalent on your distro). X11 sessions only — Wayland blocks raw screen grabs (see [Wayland note](#wayland-note)). |
   | **macOS** | Grant **Accessibility** permission to the terminal running the server: *System Settings → Privacy & Security → Accessibility*. First screenshot also prompts for **Screen Recording**. |
   | **Windows** | Nothing extra. |
 
@@ -96,8 +95,7 @@ Identical shape — point the host's MCP server config at `kira-mcp` (or `python
 
 | Tool | Purpose |
 |---|---|
-| `detect_ui_contours` | Grayscale → Canny → dilate → `findContours` → geometric classifier (`button` / `input` / `image-card` / `text line` / `divider` / `panel` / `unknown`). Returns JSON with bounding boxes + center points, and an annotated JPEG overlay inline so the agent can correlate `id` numbers with on-screen elements. |
-| `run_omniparser` | *Parked.* Hosted `microsoft/omniparser-v2` via Replicate. Slower but semantic — recognises labels and roles. Enable in `tools/__init__.py`. |
+| `detect_ui_contours` | Calls OmniParser-v2 on the public `AI-DrivenTesting/OmniParser-v2` Hugging Face Space via `gradio_client`. Returns JSON with `{id, x, y, w, h, cx, cy, type, content, interactivity}` per element plus an annotated image inline so the agent can correlate `id` numbers with on-screen elements. Cold start ~20-40s; warm calls return in a few seconds. No API key required. |
 
 ### Mouse
 
@@ -156,12 +154,11 @@ src/kira_mcp/
 │   └── keys.py        # key-name normalization for pyautogui
 └── tools/
     ├── __init__.py    # side-effect imports → registers tools
-    ├── contour.py     # OpenCV vision
+    ├── omniparser.py  # OmniParser-v2 vision (gradio_client)
     ├── mouse.py
     ├── keyboard.py
     ├── screen.py
-    ├── clipboard.py
-    └── omniparser.py  # parked
+    └── clipboard.py
 ```
 
 Add a new tool by writing a function decorated with `@mcp.tool()` (imported from `kira_mcp._mcp`) and importing the module from `tools/__init__.py`.

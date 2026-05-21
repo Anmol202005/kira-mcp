@@ -29,19 +29,21 @@ THE STANDARD LOOP — use this for every UI task unless the user says otherwise:
 1. PERCEIVE — call `screen_capture()` to get the absolute path of a fresh PNG \
 of the current screen.
 
-2. PARSE — call `detect_ui_contours(image=<that path>)`. You get back BOTH:
-     - an inline annotated PNG (the screen with bounding boxes, ids, and a \
-color legend overlaid) — read it visually to correlate ids with on-screen \
-content.
-     - JSON: `width`, `height`, `count`, `annotated` (path), and `elements` — \
-each {id, x, y, w, h, cx, cy, area, aspect, solidity, type}. `type` is a \
-coarse geometric guess (button / input / image-card / text line / divider / \
-panel / unknown), not ground truth.
+2. PARSE — call `detect_ui_contours(image=<that path>)`. This runs OmniParser-v2 \
+on a free Hugging Face Space (no API key). You get back BOTH:
+     - an inline annotated image (the screen with bounding boxes + ids \
+overlaid) — read it visually to correlate ids with on-screen content.
+     - JSON: `width`, `height`, `count`, `annotated` (path), `raw_parsed` \
+(OmniParser's original textual output), and `elements` — each {id, x, y, w, h, \
+cx, cy, type, content, interactivity}. `type` is "text" or "icon"; `content` \
+is the recognised text or icon caption; `interactivity` is OmniParser's guess \
+at whether the element is clickable.
 
 3. DECIDE — pick the element by `id`. The click target is its center \
-`(cx, cy)`. Detection is geometric, not semantic, so you'll often need to \
-reason from the annotated image plus layout context ("the button near the \
-top-right of the toolbar") to choose correctly.
+`(cx, cy)`. OmniParser is semantic — `content` usually tells you what the \
+element *is* (a button labelled "Save", a text input, an icon for settings) — \
+combine that with the annotated image when picking. First call to a cold Space \
+may take 20-40s while it boots; subsequent calls return in a few seconds.
 
 4. ACT — invoke exactly one of:
      - `mouse_click(x=cx, y=cy)` / `mouse_double_click(...)` for clicks
