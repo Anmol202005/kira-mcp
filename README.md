@@ -18,10 +18,12 @@
 
 ---
 
-**kira-mcp** is a local [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible agent host (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) full **computer-use** capabilities on the host machine:
+**kira-mcp** is a local [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible agent host (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) full **computer-use** capabilities on the host machine.
 
-- **Vision** — `detect_ui_contours` runs [microsoft/OmniParser-v2](https://huggingface.co/microsoft/OmniParser-v2.0) on a public [Hugging Face Space](https://huggingface.co/spaces/AI-DrivenTesting/OmniParser-v2) to identify on-screen elements, returning semantic labels (button / text / icon, recognised text content, interactivity) with bounding boxes, `(cx, cy)` click targets, and an annotated overlay image. No API key required — the Space is free to call.
-- **Desktop automation** — pixel-accurate mouse control, keyboard input (incl. chords and key holds), screen capture, and clipboard read/write via [pyautogui](https://pyautogui.readthedocs.io/), [mss](https://github.com/BoboTiG/python-mss), and [pyperclip](https://github.com/asweigart/pyperclip).
+> Built and tuned for **Windows**. macOS and Linux are best-effort — most tools work, but some UI conventions differ.
+
+- **Vision** — `perceive_screen` is the agent's one-shot "look at the screen" tool. It grabs the current display in memory, runs the local [microsoft/OmniParser-v2](https://huggingface.co/microsoft/OmniParser-v2.0) YOLO icon-detector on it, and returns an annotated image *plus* JSON with each element's `{id, bbox, cx, cy, confidence}` in absolute screen pixels — so the agent can pipe `cx, cy` straight into `mouse_click`. No API key, no network call.
+- **Desktop automation** — pixel-accurate mouse control, keyboard input (incl. chords and key holds), and clipboard read/write via [pyautogui](https://pyautogui.readthedocs.io/), [mss](https://github.com/BoboTiG/python-mss), and [pyperclip](https://github.com/asweigart/pyperclip).
 
 The server speaks stdio JSON-RPC and is launched as a child process by your agent host.
 
@@ -32,9 +34,9 @@ The server speaks stdio JSON-RPC and is launched as a child process by your agen
 
   | OS | Setup |
   |---|---|
-  | **Linux** | `sudo apt install python3-tk python3-dev scrot xdotool` (or the equivalent on your distro). X11 sessions only — Wayland blocks raw screen grabs (see [Wayland note](#wayland-note)). |
+  | **Windows** | Nothing extra — primary platform. |
   | **macOS** | Grant **Accessibility** permission to the terminal running the server: *System Settings → Privacy & Security → Accessibility*. First screenshot also prompts for **Screen Recording**. |
-  | **Windows** | Nothing extra. |
+  | **Linux** | `sudo apt install python3-tk python3-dev scrot xdotool` (or the equivalent on your distro). X11 sessions only — Wayland blocks raw screen grabs (see [Wayland note](#wayland-note)). |
 
 ## Install
 
@@ -52,7 +54,18 @@ pipx install kira-mcp
 
 Either form installs the `kira-mcp` console script and registers every tool module.
 
+The OmniParser-v2 YOLO icon-detector weights (`icon_detect/model.pt`, ~39 MB) **ship inside the wheel** — no separate download step. They are loaded and warmed up from disk at server startup.
+
 > Working on kira-mcp itself? Clone and install editable: `git clone https://github.com/Anmol202005/kira-mcp.git && cd kira-mcp && pip install -e .`
+>
+> If your clone is missing the weights (e.g. a shallow checkout, or you stripped them), restore them with:
+> ```bash
+> hf download microsoft/OmniParser-v2.0 \
+>   icon_detect/model.pt \
+>   icon_detect/model.yaml \
+>   --local-dir src/kira_mcp/weights
+> ```
+> Or point to a model.pt elsewhere on disk by setting `KIRA_YOLO_WEIGHTS` in your environment.
 
 ## Configure your agent host
 
@@ -95,7 +108,7 @@ Identical shape — point the host's MCP server config at `kira-mcp` (or `python
 
 | Tool | Purpose |
 |---|---|
-| `detect_ui_contours` | Calls OmniParser-v2 on the public `AI-DrivenTesting/OmniParser-v2` Hugging Face Space via `gradio_client`. Returns JSON with `{id, x, y, w, h, cx, cy, type, content, interactivity}` per element plus an annotated image inline so the agent can correlate `id` numbers with on-screen elements. Cold start ~20-40s; warm calls return in a few seconds. No API key required. |
+| `perceive_screen` | One-shot perceive step: screenshots the current display (or a `{x, y, width, height}` region of it), runs the local OmniParser-v2 YOLO icon-detector on it, and returns BOTH an annotated image inline AND JSON with `{width, height, count, elements}`. Each element is `{id, bbox, cx, cy, confidence}` in **absolute screen pixels** — feed `cx, cy` directly into `mouse_click`. Model is loaded and warmed up at server startup, so there is no per-call cold start; typical latency 50-200ms on GPU, 300-800ms on CPU. No API key, no network call. |
 
 ### Mouse
 
@@ -124,8 +137,7 @@ Key names accept any value from `pyautogui.KEYBOARD_KEYS`, plus common aliases (
 
 | Tool | Purpose |
 |---|---|
-| `screen_size` | `{ width, height }` of the main display. |
-| `screen_capture` | Take a screenshot of the full screen or a `{ x, y, width, height }` region. Saves as **JPG by default** (faster encode, smaller payload); pass `format="png"` for lossless. Returns the absolute file path. |
+| `screen_size` | `{ width, height }` of the main display. Useful for bound-checking, though `perceive_screen` already returns the screen dimensions in its response. |
 
 ### Clipboard
 
@@ -137,27 +149,28 @@ Key names accept any value from `pyautogui.KEYBOARD_KEYS`, plus common aliases (
 ## Typical agent loop
 
 ```
-screen_capture()                              # → /tmp/kira-mcp-shot-….jpg
-detect_ui_contours(image=<that path>)         # → JSON + annotated JPEG inline
-# agent picks an element by id, clicks its (cx, cy)
+perceive_screen()                             # → annotated JPEG inline + JSON: {width, height, elements: [{id, bbox, cx, cy, confidence}, …]}
+# agent picks an element by id, reads its (cx, cy) — already in absolute screen pixels
 mouse_click(x=cx, y=cy)
-screen_capture()                              # verify the action landed
+perceive_screen()                             # verify the action landed
 ```
+
+One tool to look, one tool to act, repeat until done.
 
 ## Layout
 
 ```
 src/kira_mcp/
 ├── __main__.py        # entry — `python -m kira_mcp` or `kira-mcp`
-├── _mcp.py            # shared FastMCP instance
+├── _mcp.py            # shared FastMCP instance + system instructions
 ├── lib/
 │   └── keys.py        # key-name normalization for pyautogui
 └── tools/
     ├── __init__.py    # side-effect imports → registers tools
-    ├── omniparser.py  # OmniParser-v2 vision (gradio_client)
+    ├── parse.py       # `perceive_screen` — screenshot + local YOLO icon-detector
+    ├── screen.py      # `screen_size` + the `Region` model
     ├── mouse.py
     ├── keyboard.py
-    ├── screen.py
     └── clipboard.py
 ```
 
@@ -176,7 +189,7 @@ python -m kira_mcp        # stdio server — drive it from your MCP host
 
 ## Wayland note
 
-On Linux Wayland sessions, raw X11 screen grabs return a black buffer. GNOME Wayland additionally blocks programmatic screenshots from unprivileged callers. If `screen_capture` returns a black image, log in to an X11 session, or switch to a Wayland compositor that ships `wlr-screencopy` (Hyprland, Sway, river, Niri) or a KDE Plasma session.
+On Linux Wayland sessions, raw X11 screen grabs return a black buffer. GNOME Wayland additionally blocks programmatic screenshots from unprivileged callers. If `perceive_screen` returns a black image (or no detections at all), log in to an X11 session, or switch to a Wayland compositor that ships `wlr-screencopy` (Hyprland, Sway, river, Niri) or a KDE Plasma session.
 
 ## License
 

@@ -1,7 +1,12 @@
 """Entry point: `python -m kira_mcp` or the `kira-mcp` console script."""
 
+from __future__ import annotations
+
+import sys
+
 from . import tools  # noqa: F401 — import for side effects (tool registration)
 from ._mcp import mcp
+from .tools.parse import initialize as _initialize_yolo
 
 
 def main() -> None:
@@ -16,9 +21,16 @@ def main() -> None:
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0  # we manage our own pacing
     except Exception as e:
-        import sys
+        print(
+            f"[kira-mcp] pyautogui unavailable ({e}); mouse/keyboard tools will fail when called.",
+            file=sys.stderr,
+            flush=True,
+        )
 
-        print(f"[kira-mcp] pyautogui unavailable ({e}); mouse/keyboard tools will fail when called.", file=sys.stderr)
+    # Load YOLO weights + warmup BEFORE starting the stdio transport. The MCP
+    # handshake will not complete until this returns, so the first real client
+    # call lands on a hot CUDA context with no per-call cold start.
+    _initialize_yolo()
 
     mcp.run(transport="stdio")
 

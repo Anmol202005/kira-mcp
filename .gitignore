@@ -13,6 +13,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Huggingface download cache (left behind when `hf download` is re-run into
+# the weights dir). The .pt / .yaml weights themselves ARE tracked.
+src/kira_mcp/weights/.cache/
+
 # OS
 .DS_Store
 

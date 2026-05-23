@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kira-mcp"
 version = "0.4.0"
-description = "Local MCP server for AI agents: OmniParser-v2 UI-element detection (via Hugging Face Spaces) plus full keyboard / mouse / screen / clipboard control via pyautogui + mss."
+description = "Local MCP server for AI agents: local YOLO-based UI-element detection (OmniParser-v2 icon detector) plus full keyboard / mouse / screen / clipboard control via pyautogui + mss."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -41,7 +41,12 @@ dependencies = [
   "pyperclip>=1.8.2",
   "pillow>=10.0",
   "pydantic>=2.0",
-  "gradio-client>=1.0",
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "torch>=2.0",
+  "torchvision>=0.15",
+  "ultralytics>=8.1",
+  "supervision>=0.18",
 ]
 
 [project.urls]
@@ -52,5 +57,19 @@ Issues = "https://github.com/Anmol202005/kira-mcp/issues"
 [project.scripts]
 kira-mcp = "kira_mcp.__main__:main"
 
+[tool.hatch.build]
+# Ship the OmniParser-v2 icon-detector weights inside the package so the user
+# does not need a separate `hf download` step. The `.cache/` carve-out keeps
+# huggingface_hub's per-download metadata out of the wheel if anyone re-runs
+# the manual download into `src/kira_mcp/weights/`.
+exclude = [
+  "src/kira_mcp/weights/.cache",
+  "src/kira_mcp/weights/**/.cache",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/kira_mcp"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/kira_mcp/weights/icon_detect/model.pt" = "kira_mcp/weights/icon_detect/model.pt"
+"src/kira_mcp/weights/icon_detect/model.yaml" = "kira_mcp/weights/icon_detect/model.yaml"
