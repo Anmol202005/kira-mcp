@@ -34,34 +34,49 @@ appear.
 THE STANDARD LOOP — use this for every UI task unless the user says otherwise:
 
 1. PERCEIVE — call `perceive_screen()`. This takes a screenshot of the current \
-display, runs the local YOLO icon-detector on it, and returns BOTH:
-     - an inline annotated image (the screen with numbered bounding boxes \
-overlaid) — read it visually to map `id` numbers to on-screen content.
+display, runs the local YOLO icon-detector AND per-element OCR on it, and \
+returns:
      - JSON text with `width`, `height`, `count`, and `elements`, where each \
-element is `{id, bbox, cx, cy, confidence}` in ABSOLUTE SCREEN PIXELS.
+element is `{id, bbox, cx, cy, confidence, text}` in ABSOLUTE SCREEN PIXELS. \
+The `text` field is the OCR-extracted text inside the bbox (empty string for \
+icon-only elements or when no OCR backend is installed).
+     - (optional, on by default) an inline annotated image with numbered \
+bounding boxes — read it visually when you need icon disambiguation or visual \
+state checks. Pass `return_image=False` on text-find / polling calls to halve \
+the payload and save ~3-4k input tokens per call.
    Everything happens locally — no network calls, no API keys. The model is \
 loaded and warmed up ONCE at server startup, so there is no per-call cold \
-start. Typical latency is 50-200ms on GPU, 300-800ms on CPU; a slower call on \
-weak hardware is normal — do NOT retry assuming something is broken.
+start. Typical latency is 50-200ms on GPU, 300-800ms on CPU. Repeated calls \
+on the same screen are nearly free (cached): perceive aggressively to verify \
+state changes.
 
-2. DECIDE — pick the element by `id`, then use its `cx`, `cy` directly as the \
-click target. The coordinates are already in absolute screen pixels — no \
-normalization, no scaling, no math. Use the annotated image to confirm \
-visually that the id matches the element you want before acting.
+2. DECIDE — TWO FAST PATHS:
+   (a) Text path (preferred for labeled buttons / inputs / chat rows): after \
+a perceive, call `find_element(text="Send")` or `find_element(text="Type a \
+message")` to get matched elements directly. Pipe `cx, cy` straight into \
+`mouse_click`. No JSON scanning, no image reading.
+   (b) Visual path (icons, ambiguous matches, visual state): use the \
+annotated image to map id → on-screen content. Then use the element's `cx`, \
+`cy` as the click target. Coordinates are already absolute screen pixels — no \
+normalization, no scaling, no math.
 
 3. ACT — invoke exactly ONE of:
      - `mouse_click(x=cx, y=cy)` / `mouse_double_click(x=cx, y=cy)` for clicks
      - `mouse_drag(from_x, from_y, to_x, to_y)` for drag-and-drop
      - `mouse_scroll(direction, amount)` for scrolling (scroll first if the \
 target may be off-screen)
-     - `keyboard_type(text=...)` for typing literal text into a focused field
+     - `keyboard_type(text=..., submit=True)` to type AND press Enter in one \
+call (chat messages, search boxes, form fields with Enter-to-submit). Set \
+`submit=False` (default) to just type.
      - `keyboard_tap(keys=[...])` for shortcuts / chords
      - For long strings: `clipboard_set(text=...)` then `keyboard_tap` the \
 paste shortcut — much faster and more reliable than typing.
 
 4. VERIFY & LOOP — call `perceive_screen()` again and confirm the screen \
 changed as expected (focus moved, dialog opened, text appeared, value \
-updated). If not, adjust and retry. Repeat from step 1 until the task is done.
+updated). For pure text verification, pass `return_image=False` — text comes \
+back as OCR. If not, adjust and retry. Repeat from step 1 until the task is \
+done.
 
 COORDINATE RULES: All x/y are absolute pixels on the main display, origin \
 top-left. The `cx` / `cy` returned by `perceive_screen` are already in this \

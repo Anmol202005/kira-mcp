@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m kira_mcp --help)",
+      "Bash(echo \"---exit: $?\")",
+      "Bash(where python3 *)",
+      "Bash(where py *)",
+      "Bash(py --version)",
+      "Bash(ls \"C:\\\\Users\\\\Yashi Sharma\\\\.claude\")",
+      "Read(//c/Users/Yashi Sharma/.claude/**)",
+      "PowerShell(\\(Get-Command uv -ErrorAction SilentlyContinue\\).Source; \\(Get-Command python -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(python -c \"import kira_mcp; print\\(kira_mcp.__file__\\)\" 2>&1)",
+      "PowerShell(python -c \"import mcp, pyautogui, mss, cv2, numpy, pyperclip, PIL, pydantic; print\\('all deps OK'\\)\" 2>&1)",
+      "PowerShell(python -m pip install -e \"C:\\\\Users\\\\Yashi Sharma\\\\projects\\\\kira-mcp\" 2>&1)",
+      "PowerShell(python -c \"import kira_mcp; print\\(kira_mcp.__file__\\)\")",
+      "PowerShell(\\(Get-Command python\\).Source)",
+      "PowerShell(python -c \"import sys; print\\(sys.executable\\)\")"
+    ]
+  }
+}

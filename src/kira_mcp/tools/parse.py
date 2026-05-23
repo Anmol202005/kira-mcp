@@ -1,18 +1,29 @@
-"""Single-shot perception tool: screenshot + YOLO icon detection in one call.
+"""Single-shot perception tool: screenshot + YOLO icon detection + OCR in one call.
 
 `perceive_screen` is the only tool the agent should call to "look" at the
 screen. It grabs the current display (or a region of it) in memory, runs the
-local OmniParser-v2 icon detector on it, and returns:
+local OmniParser-v2 icon detector on it, runs OCR per detected element, and
+returns:
 
-  - an inline annotated image (boxes + numeric ids overlaid)
+  - (optional, on by default) an inline annotated image with numbered boxes
+    overlaid — read it visually for icon disambiguation or visual state.
   - JSON: `width`, `height`, `count`, and `elements`, where each element is
-    `{id, bbox, cx, cy, confidence}` in ABSOLUTE PIXEL coordinates so the agent
-    can pipe `cx, cy` straight into `mouse_click(x=cx, y=cy)` with no math.
+    `{id, bbox, cx, cy, confidence, text}` in ABSOLUTE PIXEL coordinates so
+    the agent can pipe `cx, cy` straight into `mouse_click(x=cx, y=cy)`
+    with no math. `text` is the OCR'd text content (empty string if none or
+    if no OCR backend is installed).
 
 The annotator (`BoxAnnotator`, `annotate`, helpers) is a near-verbatim port of
-OmniParser's `util/box_annotator.py` + `util/utils.py` icon-only path: no OCR,
-no caption model, no Hugging Face Space — just the YOLO icon detector running
-on the local machine.
+OmniParser's `util/box_annotator.py` + `util/utils.py` icon-only path. OCR is
+provided by an optional backend (RapidOCR or EasyOCR — see `lib/ocr.py`).
+
+Performance:
+    Two layers of caching keep repeated perceive calls cheap (see `lib/cache.py`):
+      * A whole-screenshot fingerprint short-circuit: if the screen and
+        params are byte-identical to a previous call, the full payload is
+        returned from cache (one hash, no YOLO, no OCR, microseconds).
+      * A per-element OCR fingerprint cache: re-OCR'ing the same chat-list
+        row or toolbar button across snapshots becomes a hashmap lookup.
 
 Bootstrap contract:
     `initialize(weights_path)` MUST be called exactly once before the FastMCP
@@ -29,6 +40,7 @@ import io
 import json
 import os
 import sys
+import threading
 from typing import Annotated, Any, List, Optional, Tuple, Union
 
 import cv2
@@ -45,10 +57,21 @@ from torchvision.ops import box_convert
 from ultralytics import YOLO
 
 from .._mcp import mcp
+from ..lib import cache as _cache
+from ..lib import ocr as _ocr
 from .screen import Region
 
 
 _MODEL: Optional[YOLO] = None
+_model_ready = threading.Event()  # set once _MODEL is loaded and warmed up
+_init_error: Optional[Exception] = None  # captured if initialization fails
+
+
+# Latest perceive result, kept module-global so `find_element` can query it
+# without forcing the agent to re-paste JSON into a tool call. Protected by
+# `_LATEST_LOCK` because MCP tool calls can race in practice.
+_LATEST: Optional[dict[str, Any]] = None
+_LATEST_LOCK = threading.Lock()
 
 
 def _bundled_weights_path() -> Optional[str]:
@@ -319,12 +342,10 @@ def annotate(
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap: load YOLO once at server startup, then warm up
+# Bootstrap: load YOLO in background so mcp.run() can start immediately
 # ---------------------------------------------------------------------------
 def initialize(weights_path: Optional[str] = None) -> None:
-    """Load YOLO weights and warm up CUDA. Called from `__main__` before
-    `mcp.run()` so the first client request lands on a hot model — there is no
-    per-call cold start.
+    """Load YOLO weights and warm up CUDA.
 
     Resolution order:
       1. explicit `weights_path` argument
@@ -332,33 +353,47 @@ def initialize(weights_path: Optional[str] = None) -> None:
       3. bundled weights inside the installed package
          (`kira_mcp/weights/icon_detect/model.pt`)
 
-    Raises FileNotFoundError only if none of those resolve to a real file."""
-    global _MODEL
-    if _MODEL is not None:
+    Sets `_model_ready` when done (success or failure) so `perceive_screen`
+    can block-wait instead of spinning."""
+    global _MODEL, _init_error
+    if _model_ready.is_set():
         return
 
-    path = (
-        weights_path
-        or os.environ.get("KIRA_YOLO_WEIGHTS")
-        or _bundled_weights_path()
-    )
-    if not path or not os.path.isfile(path):
-        raise FileNotFoundError(
-            "YOLO weights not found. The package normally ships icon_detect/model.pt "
-            "under kira_mcp/weights/, but no file was found there. Re-download with:\n"
-            "  hf download microsoft/OmniParser-v2.0 icon_detect/model.pt "
-            "icon_detect/model.yaml --local-dir <kira_mcp install dir>/weights\n"
-            "or set KIRA_YOLO_WEIGHTS to the absolute path of model.pt."
+    try:
+        path = (
+            weights_path
+            or os.environ.get("KIRA_YOLO_WEIGHTS")
+            or _bundled_weights_path()
         )
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(
+                "YOLO weights not found. The package normally ships icon_detect/model.pt "
+                "under kira_mcp/weights/, but no file was found there. Re-download with:\n"
+                "  hf download microsoft/OmniParser-v2.0 icon_detect/model.pt "
+                "icon_detect/model.yaml --local-dir <kira_mcp install dir>/weights\n"
+                "or set KIRA_YOLO_WEIGHTS to the absolute path of model.pt."
+            )
 
-    print(f"[kira-mcp] loading weights from {path}", file=sys.stderr, flush=True)
-    model = YOLO(path)
+        print(f"[kira-mcp] loading weights from {path}", file=sys.stderr, flush=True)
+        model = YOLO(path)
 
-    print("[kira-mcp] warming up", file=sys.stderr, flush=True)
-    _warmup(model)
+        print("[kira-mcp] warming up", file=sys.stderr, flush=True)
+        _warmup(model)
 
-    _MODEL = model
-    print("[kira-mcp] ready", file=sys.stderr, flush=True)
+        _MODEL = model
+        print("[kira-mcp] ready", file=sys.stderr, flush=True)
+    except Exception as exc:
+        _init_error = exc
+        print(f"[kira-mcp] initialization failed: {exc}", file=sys.stderr, flush=True)
+    finally:
+        _model_ready.set()
+
+
+def initialize_in_background(weights_path: Optional[str] = None) -> None:
+    """Kick off YOLO loading in a daemon thread so `mcp.run()` can start
+    immediately and respond to the MCP initialize handshake without waiting."""
+    t = threading.Thread(target=initialize, args=(weights_path,), daemon=True)
+    t.start()
 
 
 def _warmup(model: YOLO, imgsz: int = 640) -> None:
@@ -394,10 +429,69 @@ def _grab(region: Optional[Region]) -> Tuple[Image.Image, int, int]:
     return img, origin_x, origin_y
 
 
+def _crop_for(image_np: np.ndarray, bbox_local: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
+    """Crop a YOLO element from the captured image with edge clamping.
+    Returns None if the bbox collapses to zero area at the edge."""
+    x1, y1, x2, y2 = bbox_local
+    h, w = image_np.shape[:2]
+    x1 = max(0, min(w, x1))
+    x2 = max(0, min(w, x2))
+    y1 = max(0, min(h, y1))
+    y2 = max(0, min(h, y2))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return image_np[y1:y2, x1:x2]
+
+
+def _ocr_elements_batched(
+    image_np: np.ndarray,
+    bboxes_local: List[Tuple[int, int, int, int]],
+) -> List[str]:
+    """Run OCR over a batch of element bboxes with content-hash caching.
+
+    The batching matters: handing all crops to RapidOCR's recognizer in one
+    call amortizes per-call ONNX overhead and is ~5-10x faster than calling
+    once per element. The cache layered on top means repeat-polling of a
+    static UI does zero recognizer work after the first call.
+    """
+    # First pass: fingerprint each crop and pull cached results. Collect the
+    # cache misses in a single list so the recognizer gets them as one batch.
+    n = len(bboxes_local)
+    texts: List[str] = [""] * n
+    miss_indices: List[int] = []
+    miss_crops: List[np.ndarray] = []
+    miss_keys: List[int] = []
+
+    for i, bbox in enumerate(bboxes_local):
+        crop = _crop_for(image_np, bbox)
+        if crop is None:
+            continue
+        key = _cache.fingerprint_crop(crop)
+        if key:
+            cached = _cache.OCR_CACHE.get(key)
+            if cached is not None:
+                texts[i] = cached
+                continue
+        miss_indices.append(i)
+        miss_crops.append(crop)
+        miss_keys.append(key)
+
+    if not miss_crops:
+        return texts
+
+    fresh = _ocr.read_text_batch_raw(miss_crops)
+    for orig_idx, key, text in zip(miss_indices, miss_keys, fresh):
+        texts[orig_idx] = text
+        if key:
+            _cache.OCR_CACHE.put(key, text)
+    return texts
+
+
 # ---------------------------------------------------------------------------
-# Run YOLO on an in-memory PIL image and return annotated frame + elements.
-# `origin_x` / `origin_y` shift element coordinates back into absolute screen
-# space so the agent can click them directly even on a region capture.
+# Run YOLO + OCR on an in-memory PIL image and return annotated frame +
+# elements. `origin_x` / `origin_y` shift element coordinates back into
+# absolute screen space so the agent can click them directly even on a
+# region capture.
 # ---------------------------------------------------------------------------
 def _detect(
     image: Image.Image,
@@ -406,10 +500,15 @@ def _detect(
     box_threshold: float,
     iou_threshold: float,
     imgsz: int,
-) -> Tuple[np.ndarray, int, int, List[dict]]:
+    do_ocr: bool,
+    want_annotated: bool,
+) -> Tuple[Optional[np.ndarray], int, int, List[dict]]:
+    if not _model_ready.is_set():
+        print("[kira-mcp] waiting for model to finish loading…", file=sys.stderr, flush=True)
+        _model_ready.wait()
     if _MODEL is None:
         raise RuntimeError(
-            "YOLO model not initialized. `initialize()` must run before tool calls."
+            f"YOLO model failed to initialize: {_init_error}"
         )
 
     w, h = image.size
@@ -429,46 +528,69 @@ def _detect(
     xyxy_pixel = result[0].boxes.xyxy
     conf = result[0].boxes.conf
 
-    xyxy_norm = xyxy_pixel / torch.Tensor([w, h, w, h]).to(xyxy_pixel.device)
     image_np = np.asarray(image)
 
-    # Mirror gradio_demo.py's draw_bbox_config: scales with image width / 3200.
-    box_overlay_ratio = w / 3200
-    draw_bbox_config = {
-        "text_scale": 0.8 * box_overlay_ratio,
-        "text_thickness": max(int(2 * box_overlay_ratio), 1),
-        "text_padding": max(int(3 * box_overlay_ratio), 1),
-        "thickness": max(int(3 * box_overlay_ratio), 1),
-    }
+    annotated_frame: Optional[np.ndarray] = None
+    if want_annotated:
+        xyxy_norm = xyxy_pixel / torch.Tensor([w, h, w, h]).to(xyxy_pixel.device)
+        # Mirror gradio_demo.py's draw_bbox_config: scales with image width / 3200.
+        box_overlay_ratio = w / 3200
+        draw_bbox_config = {
+            "text_scale": 0.8 * box_overlay_ratio,
+            "text_thickness": max(int(2 * box_overlay_ratio), 1),
+            "text_padding": max(int(3 * box_overlay_ratio), 1),
+            "thickness": max(int(3 * box_overlay_ratio), 1),
+        }
 
-    filtered_boxes_cxcywh = box_convert(boxes=xyxy_norm.cpu(), in_fmt="xyxy", out_fmt="cxcywh")
-    phrases = [i for i in range(len(filtered_boxes_cxcywh))]
+        filtered_boxes_cxcywh = box_convert(boxes=xyxy_norm.cpu(), in_fmt="xyxy", out_fmt="cxcywh")
+        phrases = [i for i in range(len(filtered_boxes_cxcywh))]
 
-    annotated_frame, _coords = annotate(
-        image_source=image_np,
-        boxes=filtered_boxes_cxcywh,
-        logits=conf,
-        phrases=phrases,
-        **draw_bbox_config,
-    )
+        annotated_frame, _coords = annotate(
+            image_source=image_np,
+            boxes=filtered_boxes_cxcywh,
+            logits=conf,
+            phrases=phrases,
+            **draw_bbox_config,
+        )
 
     xyxy_pixel_list = xyxy_pixel.cpu().tolist()
     conf_list = conf.cpu().tolist()
+
+    # Collect all local-coord bboxes first so we can OCR them in one batch.
+    # Local coords (pre-origin-shift) are what the cache and recognizer want;
+    # we apply origin_x/y just before publishing to the agent.
+    bboxes_local: List[Tuple[int, int, int, int]] = []
+    for bbox in xyxy_pixel_list:
+        bboxes_local.append((int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])))
+
+    if do_ocr and bboxes_local:
+        texts = _ocr_elements_batched(image_np, bboxes_local)
+    else:
+        texts = [""] * len(bboxes_local)
+
     elements: list[dict] = []
-    for i, (bbox, c) in enumerate(zip(xyxy_pixel_list, conf_list)):
-        x1 = int(bbox[0]) + origin_x
-        y1 = int(bbox[1]) + origin_y
-        x2 = int(bbox[2]) + origin_x
-        y2 = int(bbox[3]) + origin_y
+    for i, ((lx1, ly1, lx2, ly2), c, text) in enumerate(zip(bboxes_local, conf_list, texts)):
+        x1 = lx1 + origin_x
+        y1 = ly1 + origin_y
+        x2 = lx2 + origin_x
+        y2 = ly2 + origin_y
         elements.append({
             "id": i,
             "bbox": [x1, y1, x2, y2],
             "cx": (x1 + x2) // 2,
             "cy": (y1 + y2) // 2,
             "confidence": round(float(c), 3),
+            "text": text,
         })
 
     return annotated_frame, w, h, elements
+
+
+def _encode_annotated(annotated_frame: np.ndarray) -> str:
+    """JPEG-encode the annotated frame to base64 for ImageContent transport."""
+    buf = io.BytesIO()
+    Image.fromarray(annotated_frame).save(buf, "JPEG", quality=85, optimize=False)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -492,30 +614,93 @@ def perceive_screen(
         Region | None,
         Field(description="Optional screen region {x, y, width, height} to capture instead of the full display."),
     ] = None,
+    return_image: Annotated[
+        bool,
+        Field(description=(
+            "Return the annotated screenshot. Default True for backward compat; "
+            "set False on text-find / polling calls to halve payload size and "
+            "save ~3-4k input tokens per call. Use True when you need icon "
+            "disambiguation or visual state confirmation."
+        )),
+    ] = True,
+    ocr: Annotated[
+        bool,
+        Field(description=(
+            "Run OCR per detected element and include `text` in each element. "
+            "Default True; set False to skip OCR latency when you only need bboxes."
+        )),
+    ] = True,
+    min_confidence: Annotated[
+        float,
+        Field(ge=0.0, le=1.0, description=(
+            "Drop elements with confidence below this threshold from the output. "
+            "Independent of `box_threshold` (which gates YOLO) — this trims noise "
+            "in the response without changing detection. 0 keeps everything."
+        )),
+    ] = 0.0,
 ) -> CallToolResult:
     """Look at the screen. Captures the current display (or a region of it),
-    runs the local YOLO icon-detector on it, and returns the result in ONE call.
+    runs the local YOLO icon-detector + OCR, and returns the result in ONE call.
 
     Response payload:
-      - inline annotated image: the screenshot with numbered bounding boxes
-        drawn on it — read it visually to correlate `id` numbers with on-screen
-        content (button labels, icons, panels).
+      - (optional, default on) inline annotated image with numbered bounding
+        boxes — use it visually for icon-only elements or visual state checks.
+        Set `return_image=False` to skip and save tokens / latency.
       - JSON text with:
           `width`, `height`  — captured-image dimensions in pixels.
-          `count`            — number of detected elements.
-          `elements`         — list of `{id, bbox, cx, cy, confidence}`:
+          `count`            — number of detected elements after filtering.
+          `elements`         — list of `{id, bbox, cx, cy, confidence, text}`:
               * `bbox` is `[x1, y1, x2, y2]` in ABSOLUTE SCREEN PIXELS.
               * `cx`, `cy` are the pre-computed click target (center of bbox)
                 in ABSOLUTE SCREEN PIXELS — pipe them straight into
                 `mouse_click(x=cx, y=cy)`. No coordinate math required.
               * `confidence` is the detector's 0-1 score.
+              * `text` is the OCR'd text inside the bbox (empty string for
+                icons, when OCR is disabled, or when no OCR backend is
+                available).
+          `cache`            — hit/miss stats for the screenshot cache and OCR
+                cache; useful for tuning polling cadence.
+
+    Caching:
+      Two layers keep repeated polling cheap:
+        - Whole-screenshot fingerprint: byte-identical screen + same params
+          returns the previous result with one hash lookup (microseconds).
+        - Per-element OCR fingerprint: re-OCR'ing the same chat-list row or
+          toolbar button across snapshots is a hashmap lookup.
+      Hit rates are typically 70-90% on chat / sidebar / toolbar UIs.
 
     Use this as the single perceive step in every UI loop: call
-    `perceive_screen()`, pick an element, act, then call `perceive_screen()`
-    again to verify. The model is preloaded and warmed up at server startup —
-    typical latency is 50-200ms on GPU, 300-800ms on CPU.
+    `perceive_screen()`, pick an element by text or id, act, then call
+    `perceive_screen()` again to verify. For pure text-find workflows,
+    `return_image=False` is the fast path. The model is preloaded at server
+    startup — typical latency is 50-200ms on GPU, 300-800ms on CPU. Cache
+    hits return in under a millisecond.
     """
     image, origin_x, origin_y = _grab(region)
+
+    image_np = np.asarray(image)
+    # The salt mixes in every parameter that would change the result so two
+    # different perceive() calls on the same screen with different params do
+    # not collide.
+    salt = (
+        round(box_threshold, 4),
+        round(iou_threshold, 4),
+        imgsz,
+        ocr,
+        return_image,
+        round(min_confidence, 4),
+        origin_x,
+        origin_y,
+        image_np.shape,
+    )
+    screen_key = _cache.fingerprint_full(image_np, *salt)
+    cached_payload = _cache.SCREEN_CACHE.get(screen_key)
+    if cached_payload is not None:
+        with _LATEST_LOCK:
+            global _LATEST
+            _LATEST = cached_payload["json"]
+        return _build_result(cached_payload, return_image)
+
     annotated_frame, width, height, elements = _detect(
         image=image,
         origin_x=origin_x,
@@ -523,24 +708,106 @@ def perceive_screen(
         box_threshold=box_threshold,
         iou_threshold=iou_threshold,
         imgsz=imgsz,
+        do_ocr=ocr,
+        want_annotated=return_image,
     )
 
-    payload: dict[str, Any] = {
+    if min_confidence > 0:
+        elements = [e for e in elements if e["confidence"] >= min_confidence]
+
+    payload_json: dict[str, Any] = {
         "width": width,
         "height": height,
         "count": len(elements),
         "elements": elements,
+        "cache": _cache.stats(),
     }
     if region is not None:
-        payload["origin"] = {"x": origin_x, "y": origin_y}
+        payload_json["origin"] = {"x": origin_x, "y": origin_y}
 
-    buf = io.BytesIO()
-    Image.fromarray(annotated_frame).save(buf, "JPEG", quality=85, optimize=False)
-    image_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    image_b64: Optional[str] = None
+    if return_image and annotated_frame is not None:
+        image_b64 = _encode_annotated(annotated_frame)
 
-    return CallToolResult(
-        content=[
-            ImageContent(type="image", data=image_b64, mimeType="image/jpeg"),
-            TextContent(type="text", text=json.dumps(payload)),
-        ]
-    )
+    cached_payload = {"json": payload_json, "image_b64": image_b64}
+    _cache.SCREEN_CACHE.put(screen_key, cached_payload)
+
+    with _LATEST_LOCK:
+        _LATEST = payload_json
+
+    return _build_result(cached_payload, return_image)
+
+
+def _build_result(cached_payload: dict[str, Any], return_image: bool) -> CallToolResult:
+    """Render a cached payload back into MCP `CallToolResult` form."""
+    content: list[Any] = []
+    image_b64 = cached_payload.get("image_b64")
+    if return_image and image_b64:
+        content.append(ImageContent(type="image", data=image_b64, mimeType="image/jpeg"))
+    content.append(TextContent(type="text", text=json.dumps(cached_payload["json"])))
+    return CallToolResult(content=content)
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: text-based element lookup against the latest perceive result.
+# ---------------------------------------------------------------------------
+@mcp.tool(name="find_element")
+def find_element(
+    text: Annotated[
+        str,
+        Field(min_length=1, description="Text to search for inside elements (case-insensitive)."),
+    ],
+    exact: Annotated[
+        bool,
+        Field(description=(
+            "If True, match whole-string equality (case-insensitive). "
+            "If False (default), match substring."
+        )),
+    ] = False,
+    max_results: Annotated[
+        int,
+        Field(ge=1, le=100, description="Maximum number of matching elements to return."),
+    ] = 10,
+) -> str:
+    """Find elements by text from the LATEST `perceive_screen` result.
+
+    Returns a JSON object: `{count, matches: [{id, bbox, cx, cy, confidence, text}, ...]}`.
+
+    This is a stateless query against the in-memory snapshot — it does NOT
+    re-capture the screen. Call `perceive_screen(ocr=True)` first, then chain
+    one or more `find_element` calls to locate inputs / buttons / chat rows
+    by their visible text. Pipe `cx, cy` straight into `mouse_click`.
+
+    If you have not called `perceive_screen` yet (or the latest call had
+    `ocr=False`), this returns `count: 0` with an explanation.
+    """
+    with _LATEST_LOCK:
+        latest = _LATEST
+
+    if latest is None:
+        return json.dumps({
+            "count": 0,
+            "matches": [],
+            "error": (
+                "No perceive_screen result cached yet. Call perceive_screen() "
+                "first, then retry find_element."
+            ),
+        })
+
+    elements = latest.get("elements", [])
+    needle = text.casefold()
+    matches: list[dict[str, Any]] = []
+    for el in elements:
+        hay = str(el.get("text", "")).casefold()
+        if not hay:
+            continue
+        if exact:
+            if hay == needle:
+                matches.append(el)
+        else:
+            if needle in hay:
+                matches.append(el)
+        if len(matches) >= max_results:
+            break
+
+    return json.dumps({"count": len(matches), "matches": matches})

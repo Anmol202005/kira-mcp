@@ -6,7 +6,7 @@ import sys
 
 from . import tools  # noqa: F401 — import for side effects (tool registration)
 from ._mcp import mcp
-from .tools.parse import initialize as _initialize_yolo
+from .tools.parse import initialize_in_background as _initialize_yolo
 
 
 def main() -> None:
@@ -27,9 +27,9 @@ def main() -> None:
             flush=True,
         )
 
-    # Load YOLO weights + warmup BEFORE starting the stdio transport. The MCP
-    # handshake will not complete until this returns, so the first real client
-    # call lands on a hot CUDA context with no per-call cold start.
+    # Start YOLO loading in background so mcp.run() can respond to the MCP
+    # initialize handshake immediately. perceive_screen waits for the model
+    # when first called.
     _initialize_yolo()
 
     mcp.run(transport="stdio")

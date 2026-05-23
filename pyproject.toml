@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kira-mcp"
-version = "0.4.0"
-description = "Local MCP server for AI agents: local YOLO-based UI-element detection (OmniParser-v2 icon detector) plus full keyboard / mouse / screen / clipboard control via pyautogui + mss."
+version = "0.5.0"
+description = "Local MCP server for AI agents: local YOLO-based UI-element detection (OmniParser-v2 icon detector) with per-element OCR, hash caching, and full keyboard / mouse / screen / clipboard control via pyautogui + mss."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -47,7 +47,20 @@ dependencies = [
   "torchvision>=0.15",
   "ultralytics>=8.1",
   "supervision>=0.18",
+  # Hash cache backend. xxhash is faster than stdlib hashlib for our small
+  # crop fingerprints; the code falls back to blake2b if it's missing, so
+  # nothing actually breaks without it — this just makes the fast path real.
+  "xxhash>=3.0",
 ]
+
+[project.optional-dependencies]
+# OCR backends. perceive_screen still works without these (each element's
+# `text` field is just empty); installing one unlocks JSON-first agent
+# workflows where `find_element(text=...)` replaces visual id-matching.
+# rapidocr-onnxruntime is the recommended default: pure ONNX, lightweight,
+# ~30-80ms per call on CPU. easyocr is heavier but supports GPU.
+ocr = ["rapidocr-onnxruntime>=1.3"]
+ocr-gpu = ["easyocr>=1.7"]
 
 [project.urls]
 Homepage = "https://github.com/Anmol202005/kira-mcp"

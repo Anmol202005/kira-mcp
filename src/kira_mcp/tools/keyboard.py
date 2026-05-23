@@ -22,12 +22,24 @@ def keyboard_type(
         float,
         Field(ge=0, description="Seconds between keystrokes (0 = as fast as the OS allows)."),
     ] = 0.0,
+    submit: Annotated[
+        bool,
+        Field(description=(
+            "Press Enter after typing. Saves one round trip in chat / search "
+            "workflows where you'd otherwise call keyboard_tap(['enter']) right "
+            "after this. Defaults to False so existing behavior is unchanged."
+        )),
+    ] = False,
 ) -> str:
     """Type a literal string via the system keyboard. Mirrors a real user typing —
-    works in any focused text field."""
+    works in any focused text field. Set `submit=True` to press Enter at the end,
+    which folds the common "type message + send" pattern into one tool call."""
     import pyautogui
 
     pyautogui.typewrite(text, interval=interval)
+    if submit:
+        pyautogui.press("enter")
+        return f"Typed {len(text)} character(s) and pressed Enter."
     return f"Typed {len(text)} character(s)."
 
 
