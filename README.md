@@ -20,6 +20,12 @@
 
 **kira-mcp** is a local [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible agent host (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) full **computer-use** capabilities on the host machine.
 
+<p align="center">
+  <video src="https://github.com/Anmol202005/kira-mcp/raw/main/docs/captcha_demo.mp4" controls width="720"></video>
+</p>
+
+> Kira solving a CAPTCHA end-to-end - one `perceive_screen`, click-ready pixels, no human in the loop. If the player above doesn't render in your viewer, watch it directly: [`docs/captcha_demo.mp4`](docs/captcha_demo.mp4).
+
 > Built and tuned for **Windows**. macOS and Linux are best-effort — most tools work, but some UI conventions differ.
 
 - **Vision** — `perceive_screen` is the agent's one-shot "look at the screen" tool. It grabs the current display in memory, runs the local [microsoft/OmniParser-v2](https://huggingface.co/microsoft/OmniParser-v2.0) YOLO icon-detector on it, and returns an annotated image *plus* JSON with each element's `{id, bbox, cx, cy, confidence}` in absolute screen pixels — so the agent can pipe `cx, cy` straight into `mouse_click`. No API key, no network call.
