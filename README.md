@@ -20,11 +20,9 @@
 
 **kira-mcp** is a local [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible agent host (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) full **computer-use** capabilities on the host machine.
 
-<p align="center">
-  <video src="https://github.com/Anmol202005/kira-mcp/raw/main/docs/captcha_demo.mp4" controls width="720"></video>
-</p>
+https://github.com/user-attachments/assets/b9b65987-32b1-43f5-bdf0-006ea71c6d13
 
-> Kira solving a CAPTCHA end-to-end - one `perceive_screen`, click-ready pixels, no human in the loop. If the player above doesn't render in your viewer, watch it directly: [`docs/captcha_demo.mp4`](docs/captcha_demo.mp4).
+> Kira solving a CAPTCHA end-to-end — one `perceive_screen`, click-ready pixels, no human in the loop.
 
 > Built and tuned for **Windows**. macOS and Linux are best-effort — most tools work, but some UI conventions differ.
 
