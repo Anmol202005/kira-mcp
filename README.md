@@ -9,6 +9,7 @@
 ```
 
 <p align="center">
+  <a href="https://github.com/Anmol202005/kira-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Anmol202005/kira-mcp/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://pypi.org/project/kira-mcp/"><img alt="PyPI" src="https://img.shields.io/pypi/v/kira-mcp?color=3775A9&label=pypi"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white"></a>
   <a href="https://modelcontextprotocol.io"><img alt="MCP 1.2+" src="https://img.shields.io/badge/MCP-1.2+-7C3AED"></a>
@@ -31,26 +32,81 @@ https://github.com/user-attachments/assets/b9b65987-32b1-43f5-bdf0-006ea71c6d13
 
 The server speaks stdio JSON-RPC and is launched as a child process by your agent host.
 
-## Requirements
+## Quick start
 
-- Python **3.10+**
-- Platform extras (pyautogui needs them to actually drive input):
+You need **Python 3.10+** and an MCP host (the examples use Claude Desktop). Pick your OS.
 
-  | OS | Setup |
-  |---|---|
-  | **Windows** | Nothing extra — primary platform. |
-  | **macOS** | Grant **Accessibility** permission to the terminal running the server: *System Settings → Privacy & Security → Accessibility*. First screenshot also prompts for **Screen Recording**. |
-  | **Linux** | `sudo apt install python3-tk python3-dev scrot xdotool` (or the equivalent on your distro). X11 sessions only — Wayland blocks raw screen grabs (see [Wayland note](#wayland-note)). |
+<details open>
+<summary><b>🪟 Windows</b></summary>
 
-## Install
+**1. Install** (in PowerShell or Terminal):
 
-From PyPI (recommended):
+```powershell
+pip install kira-mcp
+```
+
+**2. Tell Claude Desktop about it.** Open `%APPDATA%\Claude\claude_desktop_config.json` and add:
+
+```json
+{
+  "mcpServers": {
+    "kira-mcp": { "command": "kira-mcp" }
+  }
+}
+```
+
+**3. Restart Claude Desktop.** The `kira-mcp` tools now appear. Ask it to *"look at my screen and click X"* — that's it.
+
+</details>
+
+<details>
+<summary><b>🍎 macOS</b></summary>
+
+**1. Install** (in Terminal):
 
 ```bash
 pip install kira-mcp
 ```
 
-…or, for an isolated global install that won't pollute any project's `site-packages`:
+**2. Grant permissions** so the server can see the screen and move the mouse. In **System Settings → Privacy & Security**:
+- **Accessibility** → add the app that launches the server (Claude Desktop, or your Terminal).
+- **Screen Recording** → same app. macOS also prompts on the first screenshot.
+
+> ⚠️ After granting these, fully quit and reopen the app — macOS only applies the permission on restart.
+
+**3. Tell Claude Desktop about it.** Open `~/Library/Application Support/Claude/claude_desktop_config.json` and add:
+
+```json
+{
+  "mcpServers": {
+    "kira-mcp": { "command": "kira-mcp" }
+  }
+}
+```
+
+If `kira-mcp` isn't found, use the full path (`which kira-mcp`) or the module form `"command": "python", "args": ["-m", "kira_mcp"]`.
+
+**4. Restart Claude Desktop.** The `kira-mcp` tools now appear.
+
+</details>
+
+<details>
+<summary><b>🐧 Linux</b></summary>
+
+```bash
+sudo apt install python3-tk python3-dev scrot xdotool   # or your distro's equivalent
+pip install kira-mcp
+```
+
+Then add the same `claude_desktop_config.json` block as above. **X11 only** — Wayland blocks raw screen grabs (see [Wayland note](#wayland-note)).
+
+</details>
+
+> 💡 **Want text matching too?** `pip install "kira-mcp[ocr]"` enables `find_element(text="Send")` so the agent can click by label instead of eyeballing icons.
+
+## Install options
+
+The Quick start above uses `pip`. For an isolated global install that won't touch any project's `site-packages`:
 
 ```bash
 pipx install kira-mcp
@@ -71,40 +127,20 @@ The OmniParser-v2 YOLO icon-detector weights (`icon_detect/model.pt`, ~39 MB) **
 > ```
 > Or point to a model.pt elsewhere on disk by setting `KIRA_YOLO_WEIGHTS` in your environment.
 
-## Configure your agent host
+## Other agent hosts
 
-### Claude Desktop / Claude Code
+The [Quick start](#quick-start) covers Claude Desktop. Every other host uses the same config shape — point it at the `kira-mcp` command:
 
-Add to `claude_desktop_config.json` (Desktop) or via `claude mcp add` (Code):
+- **Claude Code** — `claude mcp add kira-mcp -- kira-mcp`
+- **Cursor / Cline / Continue / Windsurf** — add the same `mcpServers` block to the host's MCP config.
 
-```json
-{
-  "mcpServers": {
-    "kira-mcp": {
-      "command": "kira-mcp"
-    }
-  }
-}
-```
-
-Prefer not to rely on the installed script? Use the module form:
+Prefer not to rely on the installed script? Use the module form anywhere a command is expected:
 
 ```json
-{
-  "mcpServers": {
-    "kira-mcp": {
-      "command": "python",
-      "args": ["-m", "kira_mcp"]
-    }
-  }
-}
+{ "command": "python", "args": ["-m", "kira_mcp"] }
 ```
 
-Restart your host. All `kira-mcp` tools will appear under the `kira-mcp` namespace.
-
-### Cursor / Cline / Continue / Windsurf
-
-Identical shape — point the host's MCP server config at `kira-mcp` (or `python -m kira_mcp`).
+After editing config, restart the host. All tools appear under the `kira-mcp` namespace.
 
 ## Tools
 
@@ -168,7 +204,9 @@ src/kira_mcp/
 ├── __main__.py        # entry — `python -m kira_mcp` or `kira-mcp`
 ├── _mcp.py            # shared FastMCP instance + system instructions
 ├── lib/
-│   └── keys.py        # key-name normalization for pyautogui
+│   ├── keys.py        # key-name normalization for pyautogui
+│   ├── cache.py       # screenshot + per-element OCR hash cache
+│   └── ocr.py         # optional OCR backend shim
 └── tools/
     ├── __init__.py    # side-effect imports → registers tools
     ├── parse.py       # `perceive_screen` — screenshot + local YOLO icon-detector
